@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>MemoRail</title>
+
+  <link rel="stylesheet" href="index.css">
+  <script src="index.js" defer></script>
+</head>
+
+<body>
+  <main id="world">
+
+    <!-- 空 -->
+    <div id="sky"></div>
+
+    <!-- 遠景 -->
+    <div id="scenery">
+      <div id="sceneryTrack">
+        <div class="landscape cloud"></div>
+        <div class="landscape hill2"></div>
+        <div class="landscape hill3"></div>
+        <div class="landscape hill4"></div>
+      </div>
+    </div>
+
+    <!-- 遠景画像切り替え用 -->
+    <div id="sceneryImageLayer"></div>
+
+    <!-- 列車 -->
+    <div id="train" role="img" aria-label="先頭車両と4両の客車からなる列車"></div>
+
+    <!-- 4種類の煙パーツを重ねて描画 -->
+    <div id="smokeLayer" aria-hidden="true"></div>
+
+    <!-- 線路パーツ -->
+    <div id="railway">
+      <div id="sleepers"></div>
+    </div>
+
+    <!-- 光のエフェクト -->
+    <canvas id="sparkCanvas"></canvas>
+
+    <!-- ホーム -->
+    <div id="platform"></div>
+
+    <!-- 背景切り替えボタン -->
+    <div id="backgroundButtons" aria-label="背景選択">
+      <div class="background-button-row">
+        <button type="button" data-scene-choice="1" disabled>1</button>
+        <button type="button" data-scene-choice="2" disabled>2</button>
+        <button type="button" data-scene-choice="3" disabled>3</button>
+        <button type="button" data-scene-choice="4" disabled>4</button>
+      </div>
+    </div>
+
+    <!-- ロゴ -->
+    <div id="logo">MemoRail</div>
+
+    <!-- 操作説明 -->
+    <div id="controls">
+      <span>A：左へ</span>
+      <span>D：右へ</span>
+    </div>
+
+  </main>
+</body>
+</html>

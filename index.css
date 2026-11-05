@@ -1,0 +1,348 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  font-family: Arial, sans-serif;
+}
+
+/* ========================================
+   ワールド
+======================================== */
+
+#world {
+  position: relative;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  background: #dce9e9;
+}
+
+/* ========================================
+   空
+======================================== */
+
+#sky {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  overflow: hidden;
+}
+
+/* 空・ホーム・遠景で共通使用する画像タイル */
+.scene-image-panel {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background-repeat: repeat-x;
+  background-size: auto 100%;
+  background-position-y: bottom;
+  pointer-events: none;
+  will-change: background-position, clip-path;
+}
+
+/* 遠景を画像素材に変更するときに使用 */
+#sceneryImageLayer {
+  position: absolute;
+  top: 10%;
+  left: 0;
+  width: 100%;
+  height: 65%;
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* ========================================
+   遠景
+======================================== */
+
+#scenery {
+  position: absolute;
+  top: 10%;
+  left: 0;
+  width: 200%;
+  height: 65%;
+  z-index: 1;
+  overflow: hidden;
+}
+
+#sceneryTrack {
+  position: absolute;
+  inset: 0;
+  width: 300%;
+  height: 100%;
+  will-change: transform;
+}
+
+.landscape {
+  position: absolute;
+  bottom: 0;
+  width: 34%;
+  height: 65%;
+  border-radius: 50% 50% 0 0;
+}
+
+.cloud {
+  left: 0;
+  height: 120%;
+  background-image: url("images/cloud_summer.png");
+}
+
+.hill2 {
+  left: 28%;
+  height: 75%;
+  background: #b4cda8;
+}
+
+.hill3 {
+  left: 58%;
+  height: 55%;
+  background: #d0dcb7;
+}
+
+.hill4 {
+  left: 85%;
+  height: 70%;
+  background: #c0d2a8;
+}
+
+/* ========================================
+   列車
+======================================== */
+
+#train {
+  /* 元画像の全幅3147pxを約1650pxで表示し、旧画像の車輪位置を維持する */
+  --train-height: 173px;
+
+  position: absolute;
+  top: calc(43% + 300px - var(--train-height));
+  left: 50%;
+  transform: translateX(-80%);/*列車の位置調整*/
+  display: flex;
+  align-items: flex-end;
+  width: max-content;
+  height: var(--train-height);
+  z-index: 3;
+  pointer-events: none;
+}
+
+/* 5枚の画像を縦横比を崩さず、隙間なく左から右へ連結 */
+.train-car {
+  display: block;
+  flex: 0 0 auto;
+  width: auto;
+  height: 100%;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+  will-change: transform;
+}
+
+/* 縮小時のサブピクセル境界に生じるごく細い隙間を防ぐ */
+.train-car + .train-car {
+  margin-left: -1px;
+}
+
+/* ========================================
+   煙（空の上、列車の手前に重ねて表示）
+======================================== */
+
+#smokeLayer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.smoke-puff {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  width: auto;
+  height: auto;
+  opacity: 0;
+  transform-origin: center center;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+  will-change: transform, opacity;
+}
+
+/* ========================================
+   線路
+======================================== */
+
+#railway {
+  position: absolute;
+  top: calc(51% + 150px);/*線路の上下配置*/
+  left: 0;
+  width: 100%;
+  height: 10%;/*18%*/
+  z-index: 2;
+  overflow: hidden;
+  background: transparent;
+}
+
+/* ========================================
+   枕木
+======================================== */
+
+#sleepers {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* 線路 */
+.sleeper {
+  position: absolute;
+  top: 25px;
+  width: 110px;
+  height: 120px;/*106.667px*/
+  background-image: url("images/rail_front.png");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 60% 30%;
+
+  /* 上下移動・拡大・透明度を操作 */
+  transform-origin: center center;
+  will-change: transform, opacity;
+  pointer-events: none;
+}
+
+/* ========================================
+   ホーム
+======================================== */
+
+#platform {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 29%;
+  z-index: 4;
+
+  background-image: url("images/home_morning6.png");
+
+  background-repeat: repeat-x;
+  background-size: auto 100%;
+  background-position: 0 bottom;
+
+  will-change: background-position;
+}
+
+/* ========================================
+   ロゴ
+======================================== */
+
+#logo {
+  position: fixed;
+  left: 28px;
+  bottom: 24px;
+  z-index: 10;
+
+  color: #665779;
+  font-size: 30px;
+  font-weight: bold;
+  letter-spacing: 1px;
+  user-select: none;
+}
+
+/* ========================================
+   操作説明
+======================================== */
+
+#controls {
+  position: fixed;
+  top: 20px;
+  right: 24px;
+  z-index: 10;
+
+  display: flex;
+  gap: 14px;
+
+  color: #665779;
+  font-size: 14px;
+  user-select: none;
+}
+
+/* ========================================
+   光のエフェクト
+======================================== */
+
+#sparkCanvas {
+  position: absolute;
+  top: calc(51% + 70px);
+  left: 0;
+
+  width: 100%;
+  height: 23%;
+  z-index: 4;
+
+  pointer-events: none;
+}
+
+/* ========================================
+   背景切り替えボタン（1～4）
+======================================== */
+
+#backgroundButtons {
+  position: fixed;
+  left: 28px;
+  bottom: 85px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.background-button-row {
+  display: grid;
+  grid-template-columns: repeat(4, 48px);
+  gap: 8px;
+}
+
+#backgroundButtons button {
+  height: 42px;
+  background-color: #ffffff;
+  color: #665779;
+  border: 2px solid #665779;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background-color 0.2s, color 0.2s;
+}
+
+#backgroundButtons button:hover:not(:disabled) {
+  background-color: #665779;
+  color: #ffffff;
+}
+
+#backgroundButtons button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+#backgroundStatus {
+  max-width: 260px;
+  min-height: 15px;
+  color: #665779;
+  font-size: 12px;
+  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.8);
+}
