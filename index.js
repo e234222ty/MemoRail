@@ -8,8 +8,6 @@ const sceneryImageLayer = document.getElementById("sceneryImageLayer");
 const sceneButtons = [...document.querySelectorAll("[data-scene-choice]")];
 const railway = document.getElementById("railway");
 const smokeLayer = document.getElementById("smokeLayer");
-const sparkCanvas = document.getElementById("sparkCanvas");
-const sparkCtx = sparkCanvas.getContext("2d");
 
 // 1. 列車・背景・線路パーツの基本設定
 let trainX = 0;
@@ -250,7 +248,7 @@ function updateSmoke(now, dt) {
 }
 
 // 線路のサイズ・位置・重なり幅は index.css の #railway で一括調整する。
-// 幅110px・重なり4pxの場合、次のタイルを106px先に配置する。
+// 表示幅と重なり幅から、次のタイルまでの配置間隔を求める。
 const railStyles = getComputedStyle(railway);
 function getRailSetting(name, fallback) {
   const value = parseFloat(railStyles.getPropertyValue(name));
@@ -258,8 +256,6 @@ function getRailSetting(name, fallback) {
 }
 
 const sleeperImageWidth = Math.max(1, getRailSetting("--rail-tile-width", 110));
-const sleeperImageHeight = Math.max(1, getRailSetting("--rail-tile-height", 73.333));
-const sleeperTop = getRailSetting("--rail-tile-y", 25);
 const sleeperOverlap = Math.max(0, getRailSetting("--rail-overlap", 4));
 const sleeperSpacing = Math.max(1, sleeperImageWidth - sleeperOverlap);
 
@@ -268,14 +264,10 @@ const sleeperRiseDistance = 48; // 生成位置から上昇する距離 (px)
 const sleeperStartScale = 0.88; // 出現時の縮小率
 const sleeperAppearDuration = 650;
 const sleeperAhead = 210;
-const particleCount = 8;
 
 const sleeperMap = new Map();
 let maxCreatedIndex = 0;
 let minCreatedIndex = -3;
-const particles = [];
-let canvasWidth = 0;
-let canvasHeight = 0;
 let lastFrame = 0;
 
 // 2. シーンの画像設定
@@ -421,20 +413,6 @@ function imageWidth(file, element) {
   return element.getBoundingClientRect().height * ratio;
 }
 
-// 4. 光エフェクト用Canvasのサイズ設定
-function resizeCanvas() {
-  const rect = sparkCanvas.getBoundingClientRect();
-  const ratio = Math.min(window.devicePixelRatio || 1, 2);
-
-  canvasWidth = rect.width;
-  canvasHeight = rect.height;
-
-  sparkCanvas.width = Math.round(canvasWidth * ratio);
-  sparkCanvas.height = Math.round(canvasHeight * ratio);
-
-  sparkCtx.setTransform(ratio, 0, 0, ratio, 0, 0);
-}
-
 function getTrainRight() {
   const trainRect = train.getBoundingClientRect();
   const railwayRect = railway.getBoundingClientRect();
@@ -462,8 +440,7 @@ function addSleeper(index, appearing, now) {
   sleeperMap.set(index, {
     element,
     state: appearing ? "appearing" : "placed",
-    startTime: now,
-    sparkled: false
+    startTime: now
   });
 }
 
@@ -526,55 +503,18 @@ function spawnNewSleepers(now) {
   }
 }
 
-// 8. 新しい線路が現れる際の光エフェクト
-function createLightParticles(
-  screenX,
-  count = particleCount
-) {
-  // Canvasと線路の位置の違いを補正
-  const railwayTop =
-    railway.getBoundingClientRect().top;
-
-  const canvasTop =
-    sparkCanvas.getBoundingClientRect().top;
-
-  const y =
-    railwayTop -
-    canvasTop +
-    sleeperTop +
-    sleeperImageHeight * 0.9;
-
-  for (let i = 0; i < count; i++) {
-    const angle = Math.random() * Math.PI * 2;
-    const speed = 0.45 + Math.random() * 1.6;
-
-    particles.push({
-      worldX: screenX + worldX,
-
-      y: y + (Math.random() - 0.5) * 20,
-
-      vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed - 0.8,
-
-      life: 1,
-      decay: 0.012 + Math.random() * 0.014,
-      radius: 1.2 + Math.random() * 2.2
-    });
-  }
-}
-
-// 9. 滑らかな補間関数
+// 8. 滑らかな補間関数
 function smoothStep(t) {
   return t * t * (3 - 2 * t);
 }
 
-// 10. 線路のスクロールと出現処理
+// 9. 線路のスクロールと出現処理
 // 新しい線路だけ下から上昇し、設置後はランダムに上下移動しない。
 function updateSleepers(now) {
   // 線路全体は左右方向にのみスクロール
   sleepers.style.transform = `translate3d(${-worldX}px, 0, 0)`;
 
-  for (const [index, item] of sleeperMap) {
+  for (const item of sleeperMap.values()) {
     if (item.state !== "appearing") continue;
 
     const t = Math.min(
@@ -592,13 +532,6 @@ function updateSleepers(now) {
       `translate3d(0, ${riseY}px, 0) scale(${scale})`;
     item.element.style.opacity = `${visibility}`;
 
-    // 元と同じタイミングで光の粒を発生させる
-    if (!item.sparkled && t >= 0.24) {
-      const screenX = index * sleeperSpacing + sleeperImageWidth / 2 - worldX;
-      createLightParticles(screenX);
-      item.sparkled = true;
-    }
-
     if (t >= 1) {
       item.state = "placed";
       // 固定位置に戻した後は、何もアニメーションさせない
@@ -608,64 +541,7 @@ function updateSleepers(now) {
   }
 }
 
-// 11. 光の粒の更新
-function updateParticles(dt) {
-  sparkCtx.clearRect(
-    0,
-    0,
-    canvasWidth,
-    canvasHeight
-  );
-
-  for (let i = particles.length - 1; i >= 0; i--) {
-    const p = particles[i];
-
-    p.worldX += p.vx * dt;
-    p.y += p.vy * dt;
-    p.vy += 0.012 * dt;
-    p.life -= p.decay * dt;
-
-    if (p.life <= 0) {
-      particles.splice(i, 1);
-      continue;
-    }
-
-    const x = p.worldX - worldX;
-    const glow = p.radius * 5;
-
-    const gradient =
-      sparkCtx.createRadialGradient(
-        x, p.y, 0,
-        x, p.y, glow
-      );
-
-    gradient.addColorStop(
-      0,
-      `rgba(255,250,215,${p.life})`
-    );
-
-    gradient.addColorStop(
-      0.3,
-      `rgba(255,221,140,${p.life * 0.6})`
-    );
-
-    gradient.addColorStop(
-      1,
-      "rgba(255,221,140,0)"
-    );
-
-    sparkCtx.fillStyle = gradient;
-
-    sparkCtx.beginPath();
-    sparkCtx.arc(
-      x, p.y, glow,
-      0, Math.PI * 2
-    );
-    sparkCtx.fill();
-  }
-}
-
-// 12. 背景スクロール
+// 10. 背景スクロール
 function updateBackground() {
   updateSceneBackgrounds();
 
@@ -673,7 +549,7 @@ function updateBackground() {
     `translateX(${-worldX * scenerySpeed}px)`;
 }
 
-// 13. 列車の移動
+// 11. 列車の移動
 function updateTrain() {
   let direction = 0;
 
@@ -736,7 +612,7 @@ function updateTrain() {
     `calc(50% + ${trainX}px)`;
 }
 
-// 14. アニメーションのメインループ
+// 12. アニメーションのメインループ
 function animate(now) {
   const dt = lastFrame
     ? Math.min(
@@ -753,12 +629,11 @@ function animate(now) {
   updateBackground();
   spawnNewSleepers(now);
   updateSleepers(now);
-  updateParticles(dt);
 
   requestAnimationFrame(animate);
 }
 
-// 15. キーボード操作
+// 13. キーボード操作
 function handleMoveKey(event, pressed) {
   const key = event.key.toLowerCase();
 
@@ -789,13 +664,12 @@ window.addEventListener("blur", () => {
 });
 
 window.addEventListener("resize", () => {
-  resizeCanvas();
   rebuildSceneTimelines();
   updateSceneBackgrounds();
   updateSceneButtons();
 });
 
-// 16. 背景切り替えのタイムライン
+// 14. 背景切り替えのタイムライン
 function rebuildSceneTimelines() {
   let currentSkyFile = SCENE_IMAGES.initial.sky;
   let currentSkyOrigin = 0;
@@ -936,7 +810,7 @@ function rebuildSceneTimelines() {
   }
 }
 
-// 17. 背景表示用パネル作成
+// 15. 背景表示用パネル作成
 function ensureScenePanels(layer, count) {
   while (layer.element.children.length < count) {
     const panel =
@@ -963,7 +837,7 @@ function ensureScenePanels(layer, count) {
   });
 }
 
-// 18. 背景画像の継ぎ目対策
+// 16. 背景画像の継ぎ目対策
 const backgroundOverlap = 3;
 
 function updateSceneBackgrounds() {
@@ -1013,7 +887,7 @@ function updateSceneBackgrounds() {
   updateSceneButtons();
 }
 
-// 19. 背景切り替えボタン
+// 17. 背景切り替えボタン
 function canSelectScene(choice) {
   const route = SCENE_IMAGES.routes[choice];
 
@@ -1099,14 +973,13 @@ for (const button of sceneButtons) {
   });
 }
 
-// 20. 初期化
+// 18. 初期化
 createTrainCars();
 initializeSmoke();
 platform.style.backgroundImage = "none";
 
 preloadSceneImages();
 rebuildSceneTimelines();
-resizeCanvas();
 createInitialSleepers();
 
 requestAnimationFrame(animate);
