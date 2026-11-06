@@ -123,7 +123,7 @@ const SMOKE_CONFIG = {
   widthMax: 69,
   upwardSpeedMin: 18,        // 上昇速度（px/秒）
   upwardSpeedMax: 32,
-  trainDrift: 0.28,           // 列車の走行に対して煙が逆方向へ流れる強さ
+  trainDrift: 0.28,           // 煙が流れる強さ
   horizontalJitter: 6        // 停車中もゆっくり左右へ揺れる幅（px/秒）
 };
 
@@ -249,24 +249,26 @@ function updateSmoke(now, dt) {
   }
 }
 
-// 線路画像の位置
-const sleeperSpacing = 60;
-const sleeperTop = 25;
-const sleeperImageWidth = 110;
-const sleeperImageHeight = 106.667;
+// 線路のサイズ・位置・重なり幅は index.css の #railway で一括調整する。
+// 幅110px・重なり4pxの場合、次のタイルを106px先に配置する。
+const railStyles = getComputedStyle(railway);
+function getRailSetting(name, fallback) {
+  const value = parseFloat(railStyles.getPropertyValue(name));
+  return Number.isFinite(value) ? value : fallback;
+}
 
-// 線路の描画
-const sleeperRiseDistance = 48;
+const sleeperImageWidth = Math.max(1, getRailSetting("--rail-tile-width", 110));
+const sleeperImageHeight = Math.max(1, getRailSetting("--rail-tile-height", 73.333));
+const sleeperTop = getRailSetting("--rail-tile-y", 25);
+const sleeperOverlap = Math.max(0, getRailSetting("--rail-overlap", 4));
+const sleeperSpacing = Math.max(1, sleeperImageWidth - sleeperOverlap);
+
+// 新しい線路は、下から上昇・拡大・フェードインして定位置に収まる
+const sleeperRiseDistance = 48; // 生成位置から上昇する距離 (px)
+const sleeperStartScale = 0.88; // 出現時の縮小率
 const sleeperAppearDuration = 650;
-const sleeperStartScale = 0.88;
 const sleeperAhead = 210;
-
-// 出現後に各パーツが独立してゆっくり上下する
-const sleeperFloatMin = 0.6;
-const sleeperFloatMax = 3;
-const sleeperFloatMinPeriod = 2400;
-const sleeperFloatMaxPeriod = 4100;
-const particleCount = 22;
+const particleCount = 8;
 
 const sleeperMap = new Map();
 let maxCreatedIndex = 0;
@@ -440,20 +442,16 @@ function getTrainRight() {
   return trainRect.right - railwayRect.left;
 }
 
-// 5. 線路パーツ（rail0.png）の作成
+// 5. 線路パーツ（rail_00.png）の作成
 function addSleeper(index, appearing, now) {
   if (sleeperMap.has(index)) return;
 
   const element = document.createElement("div");
-
   element.className = "sleeper";
   element.style.left = `${index * sleeperSpacing}px`;
-  element.style.top = `${sleeperTop}px`;
-
-  // 新しく現れる線路は最初は透明
   element.style.opacity = appearing ? "0" : "1";
 
-  // 完成位置より下に、小さめに配置
+  // 新しい線路だけ、完成位置より下に小さく配置する。
   if (appearing) {
     element.style.transform =
       `translate3d(0, ${sleeperRiseDistance}px, 0) ` +
@@ -461,25 +459,11 @@ function addSleeper(index, appearing, now) {
   }
 
   sleepers.appendChild(element);
-
-  // 各パーツに別々の揺れ幅・周期・位相を設定
   sleeperMap.set(index, {
     element,
     state: appearing ? "appearing" : "placed",
     startTime: now,
-    sparkled: false,
-
-    floatAmplitude:
-      sleeperFloatMin +
-      Math.random() *
-      (sleeperFloatMax - sleeperFloatMin),
-
-    floatPeriod:
-      sleeperFloatMinPeriod +
-      Math.random() *
-      (sleeperFloatMaxPeriod - sleeperFloatMinPeriod),
-
-    floatPhase: Math.random() * Math.PI * 2
+    sparkled: false
   });
 }
 
@@ -517,7 +501,7 @@ function spawnNewSleepers(now) {
       i <= targetIndex;
       i++
     ) {
-      // 下から浮かび上がる状態で生成
+      // 下から浮かび上がる出現アニメーションで生成
       addSleeper(i, true, now);
     }
 
@@ -542,7 +526,7 @@ function spawnNewSleepers(now) {
   }
 }
 
-// 8. 線路が浮かび上がる際の光エフェクト
+// 8. 新しい線路が現れる際の光エフェクト
 function createLightParticles(
   screenX,
   count = particleCount
@@ -558,7 +542,7 @@ function createLightParticles(
     railwayTop -
     canvasTop +
     sleeperTop +
-    sleeperImageHeight * 0.55;
+    sleeperImageHeight * 0.9;
 
   for (let i = 0; i < count; i++) {
     const angle = Math.random() * Math.PI * 2;
@@ -567,7 +551,7 @@ function createLightParticles(
     particles.push({
       worldX: screenX + worldX,
 
-      y: y + (Math.random() - 0.5) * 35,
+      y: y + (Math.random() - 0.5) * 20,
 
       vx: Math.cos(angle) * speed,
       vy: Math.sin(angle) * speed - 0.8,
@@ -584,125 +568,42 @@ function smoothStep(t) {
   return t * t * (3 - 2 * t);
 }
 
-// 10. 線路の出現・浮遊アニメーション
+// 10. 線路のスクロールと出現処理
+// 新しい線路だけ下から上昇し、設置後はランダムに上下移動しない。
 function updateSleepers(now) {
-  // ワールドのスクロールに合わせて移動
-  sleepers.style.transform =
-    `translateX(${-worldX}px)`;
+  // 線路全体は左右方向にのみスクロール
+  sleepers.style.transform = `translate3d(${-worldX}px, 0, 0)`;
 
   for (const [index, item] of sleeperMap) {
+    if (item.state !== "appearing") continue;
 
-    // =====================================
-    // 各パーツのランダムな浮遊運動
-    // =====================================
-
-    const wave = Math.sin(
-      (now / item.floatPeriod) * Math.PI * 2 +
-      item.floatPhase
+    const t = Math.min(
+      Math.max((now - item.startTime) / sleeperAppearDuration, 0),
+      1
     );
 
-    const floatY = wave * item.floatAmplitude;
+    // 元の「最初は速く、終わりはゆっくり上昇する」動きを復元
+    const ease = 1 - Math.pow(1 - t, 3);
+    const riseY = sleeperRiseDistance * (1 - ease);
+    const scale = sleeperStartScale + (1 - sleeperStartScale) * ease;
+    const visibility = smoothStep(t);
 
-    // =====================================
-    // 新しく出現している線路
-    // =====================================
+    item.element.style.transform =
+      `translate3d(0, ${riseY}px, 0) scale(${scale})`;
+    item.element.style.opacity = `${visibility}`;
 
-    if (item.state === "appearing") {
-      const t = Math.min(
-        Math.max(
-          (now - item.startTime) /
-            sleeperAppearDuration,
-          0
-        ),
-        1
-      );
+    // 元と同じタイミングで光の粒を発生させる
+    if (!item.sparkled && t >= 0.24) {
+      const screenX = index * sleeperSpacing + sleeperImageWidth / 2 - worldX;
+      createLightParticles(screenX);
+      item.sparkled = true;
+    }
 
-      // 最初は速く、終盤はゆっくり上昇
-      const ease = 1 - Math.pow(1 - t, 3);
-
-      // 徐々に透明度がなくなる
-      const visibility = smoothStep(t);
-
-      // 下から完成位置へ移動
-      const riseY =
-        sleeperRiseDistance * (1 - ease);
-
-      // 少し小さい状態から通常サイズへ
-      const scale =
-        sleeperStartScale +
-        (1 - sleeperStartScale) * ease;
-
-      // 出現後半から浮遊運動を少しずつ追加
-      const floatBlend = smoothStep(
-        Math.max(0, (t - 0.55) / 0.45)
-      );
-
-      const currentY =
-        riseY + floatY * floatBlend;
-
-      // 位置と拡大率を反映
-      item.element.style.transform =
-        `translate3d(0, ${currentY}px, 0) ` +
-        `scale(${scale})`;
-
-      // 透明度を反映
-      item.element.style.opacity =
-        `${visibility}`;
-
-      // =====================================
-      // 線路の背景の光とぼかし（いらないかも）
-      // =====================================
-
-      /*const glow = 1 - visibility;
-
-      const blurAmount =
-        (2.2 * glow).toFixed(2);
-
-      const glowRadius =
-        (10 * glow).toFixed(1);
-
-      const glowOpacity =
-        (0.8 * glow).toFixed(2);
-
-      item.element.style.filter =
-        `blur(${blurAmount}px) ` +
-        `drop-shadow(0 0 ${glowRadius}px ` +
-        `rgba(255, 226, 159, ${glowOpacity}))`;*/
-
-      // =====================================
-      // 出現途中で光の粒を発生
-      // =====================================
-
-      if (!item.sparkled && t >= 0.24) {
-        const screenX =
-          index * sleeperSpacing +
-          sleeperImageWidth / 2 -
-          worldX;
-
-        createLightParticles(screenX);
-
-        item.sparkled = true;
-      }
-
-      // =====================================
-      // 出現完了
-      // =====================================
-
-      if (t >= 1) {
-        item.state = "placed";
-
-        item.element.style.opacity = "1";
-        item.element.style.filter = "none";
-      }
-
-    } else {
-
-      // =====================================
-      // 完成した線路のゆっくりした上下運動
-      // =====================================
-
-      item.element.style.transform =
-        `translate3d(0, ${floatY}px, 0)`;
+    if (t >= 1) {
+      item.state = "placed";
+      // 固定位置に戻した後は、何もアニメーションさせない
+      item.element.style.transform = "none";
+      item.element.style.opacity = "1";
     }
   }
 }

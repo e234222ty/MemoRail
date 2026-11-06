@@ -1,3 +1,4 @@
+
 * {
   box-sizing: border-box;
 }
@@ -188,11 +189,19 @@ body {
 ======================================== */
 
 #railway {
+  /* =====線路の調整===== */
+  --rail-tile-width: 27.5px;    /* 線路1枚の表示幅 */
+  --rail-tile-height: 18.25px;/* 線路1枚の表示高さ */
+  --rail-overlap: 4px;        /* 隣の画像と重ねる幅 */
+  --rail-tile-y: 25px;        /* この領域内での線路の上下位置 */
+  --rail-image-zoom-x: 95%; /* 元画像の左右透明余白を切るための倍率 */
+
   position: absolute;
-  top: calc(51% + 150px);/*線路の上下配置*/
-  left: 0;
+  top: calc(51% + 191px); /* 線路全体の上下位置 */
+  left: 0;                /* 線路全体の左右位置 */
   width: 100%;
-  height: 10%;/*18%*/
+  height: calc(var(--rail-tile-y) + var(--rail-tile-height) + 50px);
+  /* 下から48px浮かび上がる演出が切れない高さを確保 */
   z-index: 2;
   overflow: hidden;
   background: transparent;
@@ -208,18 +217,18 @@ body {
   pointer-events: none;
 }
 
-/* 線路 */
+/* タイルはJS側で (表示幅 - 重なり幅) ごとに横並びにする */
 .sleeper {
   position: absolute;
-  top: 25px;
-  width: 110px;
-  height: 120px;/*106.667px*/
-  background-image: url("images/rail_front.png");
+  top: var(--rail-tile-y);
+  width: var(--rail-tile-width);
+  height: var(--rail-tile-height);
+  background-image: url("images/rail_00.png");
   background-repeat: no-repeat;
-  background-position: center;
-  background-size: 60% 30%;
+  background-position: center center;
+  background-size: var(--rail-image-zoom-x) 100%;
 
-  /* 上下移動・拡大・透明度を操作 */
+  transform: none;             /* 設置後は上下に揺れない */
   transform-origin: center center;
   will-change: transform, opacity;
   pointer-events: none;
