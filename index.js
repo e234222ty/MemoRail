@@ -1,11 +1,4 @@
 
-
-
-
-
-
-
-
 const train = document.getElementById("train");
 const sceneryTrack = document.getElementById("sceneryTrack");
 const sleepers = document.getElementById("sleepers");
@@ -285,61 +278,38 @@ let canvasWidth = 0;
 let canvasHeight = 0;
 let lastFrame = 0;
 
-// 2. シーンの画像設定
+// 2. 空画像と切り替え設定
+// 1920 x 1080 の同じ縦横比を持つ11枚を使用。
+// 奇数は左右がつながる通常シーン、偶数は前後のシーンをつなぐ1回限りの画像。
+// 順番: SPACE(01 -> 02 -> 03), ボタン1(03 -> 04 -> 05),
+//         ボタン2(05 -> 06 -> 07), ボタン3(07 -> 08 -> 09),
+//         ボタン4(09 -> 10 -> 11)
 const SCENE_IMAGES = {
   initial: {
-    sky: "images/air_01.png",
+    sky: "images/sky_01.png",
     scenery: null,
     platform: "images/home_morning6.png"
   },
   routes: {
+    0: {
+      bridge: { sky: "images/sky_02.png", scenery: null, platform: null },
+      destination: { sky: "images/sky_03.png", scenery: null, platform: null }
+    },
     1: {
-      bridge: {
-        sky: "images/air_02.png",
-        scenery: null,
-        platform: null
-      },
-      destination: {
-        sky: "images/air_03.png",
-        scenery: null,
-        platform: null
-      }
+      bridge: { sky: "images/sky_04.png", scenery: null, platform: null },
+      destination: { sky: "images/sky_05.png", scenery: null, platform: null }
     },
     2: {
-      bridge: {
-        sky: "images/air_04.png",
-        scenery: null,
-        platform: null
-      },
-      destination: {
-        sky: "images/air_05.png",
-        scenery: null,
-        platform: null
-      }
+      bridge: { sky: "images/sky_06.png", scenery: null, platform: null },
+      destination: { sky: "images/sky_07.png", scenery: null, platform: null }
     },
     3: {
-      bridge: {
-        sky: "images/air_06.png",
-        scenery: null,
-        platform: null
-      },
-      destination: {
-        sky: "images/air_07.png",
-        scenery: null,
-        platform: null
-      }
+      bridge: { sky: "images/sky_08.png", scenery: null, platform: null },
+      destination: { sky: "images/sky_09.png", scenery: null, platform: null }
     },
     4: {
-      bridge: {
-        sky: "images/air_08.png",
-        scenery: null,
-        platform: null
-      },
-      destination: {
-        sky: "images/air_09.png",
-        scenery: null,
-        platform: null
-      }
+      bridge: { sky: "images/sky_10.png", scenery: null, platform: null },
+      destination: { sky: "images/sky_11.png", scenery: null, platform: null }
     }
   }
 };
@@ -361,6 +331,18 @@ const sceneLayers = {
     segments: []
   }
 };
+
+// ブラウザの高さ変更後も同じ空の位置を保つための基準高さ。
+// この倍率は「空」の座標にのみ適用し、列車・線路の位置には影響させない。
+const skyReferenceHeight = Math.max(1, sky.getBoundingClientRect().height);
+
+function sceneLayerSpeed(layer) {
+  if (layer.element === sky) {
+    const currentHeight = Math.max(1, sky.getBoundingClientRect().height);
+    return skySpeed * currentHeight / skyReferenceHeight;
+  }
+  return layer.speed;
+}
 
 const sceneChangeAhead = 100;
 const sceneHistory = [];
@@ -767,6 +749,14 @@ function animate(now) {
 
 // 15. キーボード操作
 function handleMoveKey(event, pressed) {
+  // スペースキーは最初の空の切り替えだけに使用する。
+  // keydownの連続発火は無視するため、押しっぱなしでも1回しか切り替わらない。
+  if (event.code === "Space" || event.key === " ") {
+    event.preventDefault();
+    if (pressed && !event.repeat) selectScene(0);
+    return;
+  }
+
   const key = event.key.toLowerCase();
 
   if (key === "a" || key === "arrowleft") {
@@ -827,7 +817,7 @@ function rebuildSceneTimelines() {
       event.skyStart + bridgeWidth;
 
     event.startWorldX =
-      event.skyStart / skySpeed;
+      event.skyStart / sceneLayerSpeed(sceneLayers.sky);
 
     currentSkyFile = route.destination.sky;
     currentSkyOrigin = event.skyEnd;
@@ -838,7 +828,7 @@ function rebuildSceneTimelines() {
       SCENE_IMAGES.routes[event.choice];
 
     event.endWorldX =
-      event.skyEnd / skySpeed;
+      event.skyEnd / sceneLayerSpeed(sceneLayers.sky);
 
     for (const [type, layer] of
       Object.entries(sceneLayers)) {
@@ -851,7 +841,7 @@ function rebuildSceneTimelines() {
           imageWidth(
             bridgeFile,
             layer.element
-          ) / layer.speed;
+          ) / sceneLayerSpeed(layer);
 
         event.endWorldX =
           Math.max(event.endWorldX, end);
@@ -885,7 +875,7 @@ function rebuildSceneTimelines() {
       }
 
       const start =
-        event.startWorldX * layer.speed;
+        event.startWorldX * sceneLayerSpeed(layer);
 
       if (currentFile) {
         segments.push({
@@ -975,7 +965,7 @@ const backgroundOverlap = 3;
 
 function updateSceneBackgrounds() {
   for (const layer of Object.values(sceneLayers)) {
-    const scrollX = worldX * layer.speed;
+    const scrollX = worldX * sceneLayerSpeed(layer);
 
     const screenWidth =
       layer.element.getBoundingClientRect().width;
@@ -1026,6 +1016,11 @@ function canSelectScene(choice) {
 
   if (!route) return false;
 
+  // 0, 1, 2, 3, 4 をこの順に1回ずつ実行する。
+  // 0はスペースキー専用、1～4は既存の4つのボタン用。
+  // 前のつなぎ画像を通過するまでは次を選択できない。
+  if (choice !== sceneHistory.length) return false;
+
   const last =
     sceneHistory[sceneHistory.length - 1];
 
@@ -1074,7 +1069,7 @@ function selectScene(choice) {
     sky
   );
 
-  const scrollX = worldX * skySpeed;
+  const scrollX = worldX * sceneLayerSpeed(sceneLayers.sky);
 
   const targetX =
     scrollX +
