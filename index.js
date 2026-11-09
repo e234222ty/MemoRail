@@ -1,4 +1,11 @@
 
+
+
+
+
+
+
+
 const train = document.getElementById("train");
 const sceneryTrack = document.getElementById("sceneryTrack");
 const sleepers = document.getElementById("sleepers");
