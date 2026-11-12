@@ -24,7 +24,8 @@ const maxSpeed = 6;
 const deceleration = 0.12;
 const scenerySpeed = 0.8;
 const skySpeed = 0.8;
-const platformSpeed = 1.3;
+// 3層の番号とつなぎの境界をそろえるため、同じ速度を使用する。
+const platformSpeed = skySpeed;
 
 //列車画像読み込み
 const TRAIN_PARTS = [
@@ -279,7 +280,8 @@ let canvasHeight = 0;
 let lastFrame = 0;
 
 // 2. 空画像と切り替え設定
-// 1920 x 1080 の同じ縦横比を持つ11枚を使用。
+// 空はsky_01～11、遠景はfar_01～11、近景はnear_01～11。
+// 今回の遠景・近景はすべて1920×1080。空は実際の画像比率を使用。
 // 奇数は左右がつながる通常シーン、偶数は前後のシーンをつなぐ1回限りの画像。
 // 順番: SPACE(01 -> 02 -> 03), ボタン1(03 -> 04 -> 05),
 //         ボタン2(05 -> 06 -> 07), ボタン3(07 -> 08 -> 09),
@@ -287,29 +289,29 @@ let lastFrame = 0;
 const SCENE_IMAGES = {
   initial: {
     sky: "images/sky_01.png",
-    scenery: null,
-    platform: "images/home_morning6.png"
+    scenery: "images/far_01.png",
+    platform: "images/near_01.png"
   },
   routes: {
     0: {
-      bridge: { sky: "images/sky_02.png", scenery: null, platform: null },
-      destination: { sky: "images/sky_03.png", scenery: null, platform: null }
+      bridge: { sky: "images/sky_02.png", scenery: "images/far_02.png", platform: "images/near_02.png" },
+      destination: { sky: "images/sky_03.png", scenery: "images/far_03.png", platform: "images/near_03.png" }
     },
     1: {
-      bridge: { sky: "images/sky_04.png", scenery: null, platform: null },
-      destination: { sky: "images/sky_05.png", scenery: null, platform: null }
+      bridge: { sky: "images/sky_04.png", scenery: "images/far_04.png", platform: "images/near_04.png" },
+      destination: { sky: "images/sky_05.png", scenery: "images/far_05.png", platform: "images/near_05.png" }
     },
     2: {
-      bridge: { sky: "images/sky_06.png", scenery: null, platform: null },
-      destination: { sky: "images/sky_07.png", scenery: null, platform: null }
+      bridge: { sky: "images/sky_06.png", scenery: "images/far_06.png", platform: "images/near_06.png" },
+      destination: { sky: "images/sky_07.png", scenery: "images/far_07.png", platform: "images/near_07.png" }
     },
     3: {
-      bridge: { sky: "images/sky_08.png", scenery: null, platform: null },
-      destination: { sky: "images/sky_09.png", scenery: null, platform: null }
+      bridge: { sky: "images/sky_08.png", scenery: "images/far_08.png", platform: "images/near_08.png" },
+      destination: { sky: "images/sky_09.png", scenery: "images/far_09.png", platform: "images/near_09.png" }
     },
     4: {
-      bridge: { sky: "images/sky_10.png", scenery: null, platform: null },
-      destination: { sky: "images/sky_11.png", scenery: null, platform: null }
+      bridge: { sky: "images/sky_10.png", scenery: "images/far_10.png", platform: "images/near_10.png" },
+      destination: { sky: "images/sky_11.png", scenery: "images/far_11.png", platform: "images/near_11.png" }
     }
   }
 };
@@ -333,11 +335,11 @@ const sceneLayers = {
 };
 
 // ブラウザの高さ変更後も同じ空の位置を保つための基準高さ。
-// この倍率は「空」の座標にのみ適用し、列車・線路の位置には影響させない。
+// 空・遠景・近景すべてに同じ倍率を適用し、番号の境界をそろえる。
 const skyReferenceHeight = Math.max(1, sky.getBoundingClientRect().height);
 
 function sceneLayerSpeed(layer) {
-  if (layer.element === sky) {
+  if (layer.element === sky || layer.element === sceneryImageLayer || layer.element === platform) {
     const currentHeight = Math.max(1, sky.getBoundingClientRect().height);
     return skySpeed * currentHeight / skyReferenceHeight;
   }
