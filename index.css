@@ -397,8 +397,8 @@ body {
 }
 #train {
   --train-height: calc(173 * var(--layout-unit));
-  top: calc(680 * var(--layout-unit));/*591.4*/
+  top: calc(690 * var(--layout-unit));/*591.4*/
 }
 #railway {
-  top: calc(845 * var(--layout-unit) - var(--rail-tile-y));/*766.8*/
+  top: calc(855 * var(--layout-unit) - var(--rail-tile-y));/*766.8*/
 }
