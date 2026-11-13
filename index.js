@@ -265,7 +265,7 @@ const sleeperOverlap = Math.max(0, getRailSetting("--rail-overlap", 4));
 const sleeperSpacing = Math.max(1, sleeperImageWidth - sleeperOverlap);
 
 // 新しい線路は、下から上昇・拡大・フェードインして定位置に収まる
-const sleeperRiseDistance = 48; // 生成位置から上昇する距離 (px)
+const sleeperRiseDistance = 38; // 生成位置から上昇する距離 (px)
 const sleeperStartScale = 0.88; // 出現時の縮小率
 const sleeperAppearDuration = 650;
 const sleeperAhead = 210;
