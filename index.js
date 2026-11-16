@@ -23,13 +23,11 @@ const acceleration = 0.08;
 const maxSpeed = 6;
 const deceleration = 0.12;
 // ===== 背景の速度設定（線路の移動量＝1を基準にした倍率） =====
-// 空＜遠景＜近景にすると、遠近感が出る。
-const skySpeed = 1;     // 空：線路と同速度
-const scenerySpeed = 0.60; // 遠景：線路の60%の速度
-const platformSpeed = 1;   // 近景：必ず1にすると線路と同速
-// 線路はworldXをそのまま使って移動するため、倍率は1。
-// 画像ごとに速度が違うので、季節のつなぎが画面を通過する時刻も異なる。
-// ボタンは、すべての層のつなぎが通過してから次の番号を選択できる。
+// 【通常走行】空・近景・線路＝1、遠景＝0.6。
+// 季節切り替えは3層共通の進行度で制御し、つなぎ画像の開始・終了を同期。
+const skySpeed = 0.1;      // 空（通常時）
+const scenerySpeed = 0.30;  // 遠景（通常時）
+const platformSpeed = 1.00; // 近景。線路はworldXをそのまま使うので常に同速。
 
 //列車画像読み込み
 const TRAIN_PARTS = [
@@ -348,6 +346,15 @@ let lastBackgroundWorldX = NaN;
 let buttonStateKey = "";
 function measureLayout() {
   const worldRect = document.getElementById("world").getBoundingClientRect();
+  // キャンバス高さの変更時はスクロール座標も同比率で拡大縮小し、
+  // 画像の端と既に予約した切り替えを同じ場所に保つ。
+  const oldHeight = layout.height;
+  if (oldHeight > 1 && Math.abs(worldRect.height - oldHeight) > 0.01) {
+    const factor = worldRect.height / oldHeight;
+    worldX *= factor;
+    for (const event of sceneHistory) event.requestWorld *= factor;
+    railWindowKey = "";
+  }
   const trainRect = train.getBoundingClientRect();
   const engine = trainCars[trainCars.length - 1];
   const engineRect = engine.getBoundingClientRect();
@@ -371,7 +378,13 @@ function sceneLayerSpeed(layer) {
   return layer.speed;
 }
 
+// 切り替え予告は画面右側から少し先。単位はCSSピクセル。
 const sceneChangeAhead = 100;
+// 切り替え開始前に、遠景がつなぎ画像の端へ接続するまでの助走距離。
+// この範囲ではつなぎ画像は画面に表示されない。
+const transitionPrepareRatio = 0.45; // 画面幅に対する倍率
+// つなぎの末尾が画面左から消えた後、遠景を0.6倍に戻す距離。
+const transitionRestoreRatio = 0.50;
 const sceneHistory = [];
 const imageMetadata = new Map();
 
@@ -644,7 +657,7 @@ function updateBackground() {
   }
   // ボタンは状態が変わったときのみ更新する。
   const last = sceneHistory[sceneHistory.length - 1];
-  const key = `${sceneHistory.length}:${!last || worldX >= last.endWorldX}`;
+  const key = `${sceneHistory.length}:${!last || worldX >= last.bridgeEndWorldX}`;
   if (key !== buttonStateKey) {
     buttonStateKey = key;
     updateSceneButtons();
@@ -752,145 +765,242 @@ document.addEventListener("visibilitychange", () => {
   lastFrame = 0;
 });
 
-// 16. 背景切り替えのタイムライン
+// 16. 方法①：3層共通の「季節の切り替え進行度」
+// ─────────────────────────────────────────────────────────────
+// 通常移動は 空=1.0 / 遠景=0.6 / 近景=1.0 / 線路=1.0。
+// つなぎ中は共通の progress(0～1) を全レイヤーで使用。
+// 偶数画像は変形せず、画像の左端から右端までを全レイヤーで同時に通過する。
+// 近景は常に worldX に追従し、線路と完全に同速。
+// 遠景は通常時のタイル位相とつなぎの左右端を一致させるため、
+// 画面にまだつなぎが見えない「準備区間」でなめらかに位相調整する。
+// 切り替え後の遠景は通常速度0.6へゆっくり戻る。
+// 進行度は時間ではなく列車が進んだ距離で決定するため、停止・逆走にも対応。
+
+function clamp01(value) {
+  return Math.max(0, Math.min(1, value));
+}
+
+// 位相調整区間では位置と両端の速度を一致させる。
+function hermitePosition(from, to, fromSpeed, toSpeed, u, distance) {
+  const t = clamp01(u);
+  const t2 = t * t;
+  const t3 = t2 * t;
+  return (2 * t3 - 3 * t2 + 1) * from
+    + (t3 - 2 * t2 + t) * distance * fromSpeed
+    + (-2 * t3 + 3 * t2) * to
+    + (t3 - t2) * distance * toSpeed;
+}
+
+function hermiteSpeed(from, to, fromSpeed, toSpeed, u, distance) {
+  const t = clamp01(u);
+  const t2 = t * t;
+  const average = (to - from) / Math.max(1, distance);
+  return (6 * t - 6 * t2) * average
+    + (3 * t2 - 4 * t + 1) * fromSpeed
+    + (3 * t2 - 2 * t) * toSpeed;
+}
+
+// つなぎ終了後の速度復帰（速度の変化が両端で0になるsmoothstepを積分）。
+function settledDistance(distanceTraveled, duration, startSpeed, endSpeed) {
+  if (duration <= 0) return 0;
+  const u = clamp01(distanceTraveled / duration);
+  return duration * (startSpeed * u
+    + (endSpeed - startSpeed) * (u ** 3 - 0.5 * u ** 4));
+}
+
+// 全レイヤー共通の季節進行度。0:つなぎが画面右端に入る / 1:完全に抜ける。
+function transitionProgress(event, position) {
+  return clamp01((position - event.lockWorldX)
+    / (event.bridgeEndWorldX - event.lockWorldX));
+}
+
+// 通常走行では独立した速度、つなぎ中は共通進行度で画像を送る。
+// 各ルートの終わりは固定された仮想座標に記録されるため、逆走も連続する。
+function sceneScrollAt(type, position, events = sceneHistory) {
+  const speed = sceneLayers[type].speed;
+  let anchorWorld = 0;
+  let anchorScroll = 0;
+  for (const event of events) {
+    const plan = event.plans[type];
+    if (position < event.requestWorld) {
+      return anchorScroll + (position - anchorWorld) * speed;
+    }
+    if (position < event.lockWorldX) {
+      const distance = event.lockWorldX - event.requestWorld;
+      return hermitePosition(plan.requestScroll, plan.entryScroll,
+        speed, plan.transitionSpeed,
+        (position - event.requestWorld) / distance, distance);
+    }
+    if (position < event.bridgeEndWorldX) {
+      // 3層すべて同じ進行度を利用。元画像は拡大縮小しない。
+      return plan.entryScroll + transitionProgress(event, position)
+        * plan.transitionDistance;
+    }
+    if (position < event.settleEndWorldX) {
+      return plan.bridgeEndScroll
+        + settledDistance(position - event.bridgeEndWorldX,
+          event.settleEndWorldX - event.bridgeEndWorldX,
+          plan.transitionSpeed, speed);
+    }
+    anchorWorld = event.settleEndWorldX;
+    anchorScroll = plan.settleScroll;
+  }
+  return anchorScroll + (position - anchorWorld) * speed;
+}
+
+function layerPlanIsSmooth(plan, event, layer) {
+  const preparationDistance = event.lockWorldX - event.requestWorld;
+  if (preparationDistance <= 0) return false;
+  // 滑らかさを優先し、位相調整区間での逆走や極端な加速を避ける。
+  const minAllowed = 0.08;
+  const maxAllowed = 1.45;
+  for (let step = 0; step <= 50; step++) {
+    const velocity = hermiteSpeed(plan.requestScroll, plan.entryScroll,
+      layer.speed, plan.transitionSpeed, step / 50, preparationDistance);
+    if (!Number.isFinite(velocity) || velocity < minAllowed || velocity > maxAllowed) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// 各レイヤーの「通常画像の整数枚目」につなぎ画像の左端を接続。
+// 位相調整はつなぎ表示前だけで完了させ、切り替え本体は共通進行度に任せる。
+function computeLayerPlan(type, event, priorEvents) {
+  const layer = sceneLayers[type];
+  const route = SCENE_IMAGES.routes[event.choice];
+  const previous = priorEvents[priorEvents.length - 1];
+  const oldFile = previous
+    ? SCENE_IMAGES.routes[previous.choice].destination[type]
+    : SCENE_IMAGES.initial[type];
+  const normalWidth = imageWidth(oldFile, layer.element);
+  const bridgeWidth = imageWidth(route.bridge[type], layer.element);
+  if (normalWidth <= 0 || bridgeWidth <= 0) return null;
+
+  const origin = previous ? previous.plans[type].bridgeEndScroll : 0;
+  const requestScroll = sceneScrollAt(type, event.requestWorld, priorEvents);
+  const progressLength = event.bridgeEndWorldX - event.lockWorldX;
+  const transitionDistance = layout.width + bridgeWidth;
+  const transitionSpeed = transitionDistance / progressLength;
+  const preparationLength = event.lockWorldX - event.requestWorld;
+  const expectedEntryScroll = requestScroll
+    + preparationLength * (layer.speed + transitionSpeed) * 0.5;
+  const suggestedIndex = Math.round(
+    (expectedEntryScroll + layout.width - origin) / normalWidth);
+  // 近景は線路と同じ速度1で動くためタイル番号を固定する。
+  const candidates = type === 'platform'
+    ? [event.tileIndex]
+    : [suggestedIndex, suggestedIndex - 1, suggestedIndex + 1,
+      suggestedIndex - 2, suggestedIndex + 2,
+      suggestedIndex - 3, suggestedIndex + 3];
+  let chosen = null;
+  let bestScore = Infinity;
+  for (const index of candidates) {
+    if (index < 1) continue;
+    const bridgeStartScroll = origin + index * normalWidth;
+    const bridgeEndScroll = bridgeStartScroll + bridgeWidth;
+    const entryScroll = bridgeStartScroll - layout.width;
+    const restoreDistance = event.settleEndWorldX - event.bridgeEndWorldX;
+    const settleScroll = bridgeEndScroll
+      + restoreDistance * (transitionSpeed + layer.speed) * 0.5;
+    const plan = {
+      requestScroll, entryScroll,
+      bridgeStartScroll, bridgeEndScroll, settleScroll,
+      transitionDistance, transitionSpeed,
+      normalWidth, bridgeWidth, tileIndex: index
+    };
+    if (!layerPlanIsSmooth(plan, event, layer)) continue;
+    const score = Math.abs(entryScroll - expectedEntryScroll);
+    if (score < bestScore) {
+      chosen = plan;
+      bestScore = score;
+    }
+  }
+  return chosen;
+}
+
+// ボタンが早めに押されても、前の遠景速度復帰の終了後に次の準備を開始する。
+// 表示済みの画像を切り貼りせず、次の通常画像の整数枚先に接続する。
+function makeSynchronizedEvent(choice, requestedWorldX, tileIndex, priorEvents) {
+  const previous = priorEvents[priorEvents.length - 1];
+  const requestWorld = Math.max(requestedWorldX,
+    previous ? previous.settleEndWorldX : requestedWorldX);
+  const priorNearOrigin = previous ? previous.plans.platform.bridgeEndScroll : 0;
+  const oldNearFile = previous
+    ? SCENE_IMAGES.routes[previous.choice].destination.platform
+    : SCENE_IMAGES.initial.platform;
+  const nearNormalWidth = imageWidth(oldNearFile, platform);
+  const nearBridgeWidth = imageWidth(SCENE_IMAGES.routes[choice].bridge.platform, platform);
+  if (nearNormalWidth <= 0 || nearBridgeWidth <= 0) return null;
+
+  const preparation = Math.max(600, layout.width * transitionPrepareRatio);
+  const minBridgeStart = requestWorld + layout.width + preparation + sceneChangeAhead;
+  const minTileIndex = Math.max(1,
+    Math.ceil((minBridgeStart - priorNearOrigin) / nearNormalWidth));
+  const restore = Math.max(700, layout.width * transitionRestoreRatio);
+
+  for (let n = Math.max(tileIndex || 1, minTileIndex);
+    n < minTileIndex + 48; n++) {
+    // 近景は補正不要。近景/線路の座標は同じworldXを直接使用する。
+    const bridgeStart = priorNearOrigin + n * nearNormalWidth;
+    const startVisible = bridgeStart - layout.width;
+    const bridgeFinished = bridgeStart + nearBridgeWidth;
+    const event = {
+      choice, requestWorld, tileIndex: n,
+      lockWorldX: startVisible,
+      startWorldX: bridgeStart,
+      bridgeEndWorldX: bridgeFinished,
+      settleEndWorldX: bridgeFinished + restore,
+      plans: {}
+    };
+    let valid = true;
+    for (const type of Object.keys(sceneLayers)) {
+      const plan = computeLayerPlan(type, event, priorEvents);
+      if (!plan) { valid = false; break; }
+      event.plans[type] = plan;
+    }
+    if (valid) {
+      event.endWorldX = event.bridgeEndWorldX;
+      return event;
+    }
+  }
+  return null;
+}
+
 function rebuildSceneTimelines() {
-  let currentSkyFile = SCENE_IMAGES.initial.sky;
-  let currentSkyOrigin = 0;
-
+  // リサイズ時は表示幅と接続座標を再計算。季節の選択順は維持。
+  const rebuilt = [];
   for (const event of sceneHistory) {
-    const route =
-      SCENE_IMAGES.routes[event.choice];
-
-    const oldWidth =
-      imageWidth(currentSkyFile, sky);
-
-    const bridgeWidth =
-      imageWidth(route.bridge.sky, sky);
-
-    if (!oldWidth || !bridgeWidth) return;
-
-    event.skyStart =
-      currentSkyOrigin +
-      event.tileIndex * oldWidth;
-
-    event.skyEnd =
-      event.skyStart + bridgeWidth;
-
-    event.startWorldX =
-      event.skyStart / sceneLayerSpeed(sceneLayers.sky);
-
-    currentSkyFile = route.destination.sky;
-    currentSkyOrigin = event.skyEnd;
-  }
-
-  for (const event of sceneHistory) {
-    const route =
-      SCENE_IMAGES.routes[event.choice];
-
-    event.endWorldX =
-      event.skyEnd / sceneLayerSpeed(sceneLayers.sky);
-
-    for (const [type, layer] of
-      Object.entries(sceneLayers)) {
-
-      const bridgeFile = route.bridge[type];
-
-      if (bridgeFile) {
-        const end =
-          event.startWorldX +
-          imageWidth(
-            bridgeFile,
-            layer.element
-          ) / sceneLayerSpeed(layer);
-
-        event.endWorldX =
-          Math.max(event.endWorldX, end);
-      }
+    const fresh = makeSynchronizedEvent(
+      event.choice, event.requestWorld, event.tileIndex, rebuilt);
+    if (!fresh) {
+      console.warn('季節の接続位置を再計算できませんでした。', event.choice);
+      return;
     }
+    Object.assign(event, fresh);
+    rebuilt.push(event);
   }
-
-  for (const [type, layer] of
-    Object.entries(sceneLayers)) {
-
-    let currentFile = SCENE_IMAGES.initial[type];
-    let currentStart = -Infinity;
-    let currentOrigin = 0;
-
+  for (const [type, layer] of Object.entries(sceneLayers)) {
+    let file = SCENE_IMAGES.initial[type];
+    let from = -Infinity;
+    let origin = 0;
     const segments = [];
-
-    for (const event of sceneHistory) {
-      if (!Number.isFinite(event.startWorldX)) {
-        continue;
-      }
-
-      const route =
-        SCENE_IMAGES.routes[event.choice];
-
-      const bridgeFile = route.bridge[type];
-      const destinationFile =
-        route.destination[type];
-
-      if (!bridgeFile && !destinationFile) {
-        continue;
-      }
-
-      const start =
-        event.startWorldX * sceneLayerSpeed(layer);
-
-      if (currentFile) {
-        segments.push({
-          file: currentFile,
-          from: currentStart,
-          to: start,
-          origin: currentOrigin,
-          repeat: true
-        });
-      }
-
-      let bridgeEnd = start;
-
-      if (bridgeFile) {
-        const width =
-          imageWidth(
-            bridgeFile,
-            layer.element
-          );
-
-        bridgeEnd = start + width;
-
-        segments.push({
-          file: bridgeFile,
-          from: start,
-          to: bridgeEnd,
-          origin: start,
-          repeat: false
-        });
-      }
-
-      currentFile =
-        destinationFile || currentFile;
-
-      currentStart = bridgeEnd;
-      currentOrigin = bridgeEnd;
+    for (const event of rebuilt) {
+      const route = SCENE_IMAGES.routes[event.choice];
+      const plan = event.plans[type];
+      segments.push({file, from, to: plan.bridgeStartScroll,
+        origin, repeat: true});
+      segments.push({file: route.bridge[type],
+        from: plan.bridgeStartScroll, to: plan.bridgeEndScroll,
+        origin: plan.bridgeStartScroll, repeat: false});
+      file = route.destination[type];
+      from = plan.bridgeEndScroll;
+      origin = plan.bridgeEndScroll;
     }
-
-    if (currentFile) {
-      segments.push({
-        file: currentFile,
-        from: currentStart,
-        to: Infinity,
-        origin: currentOrigin,
-        repeat: true
-      });
-    }
-
+    segments.push({file, from, to: Infinity, origin, repeat: true});
     layer.segments = segments;
-
-    ensureScenePanels(
-      layer,
-      segments.length
-    );
   }
+  backgroundDirty = true;
 }
 
 // 17. 背景表示用パネル作成
@@ -901,8 +1011,8 @@ function ensureScenePanels(layer) {
 
 const backgroundOverlap = 0.5;
 function updateSceneBackgrounds() {
-  for (const layer of Object.values(sceneLayers)) {
-    const scrollX = worldX * sceneLayerSpeed(layer);
+  for (const [type, layer] of Object.entries(sceneLayers)) {
+    const scrollX = sceneScrollAt(type, worldX);
     const visible = [];
     for (const segment of layer.segments) {
       const width = imageWidth(segment.file, layer.element);
@@ -951,13 +1061,14 @@ function canSelectScene(choice) {
 
   // 0, 1, 2, 3, 4 をこの順に1回ずつ実行する。
   // 0はスペースキー専用、1～4は既存の4つのボタン用。
-  // 前のつなぎ画像を通過するまでは次を選択できない。
+  // 次の通常画像の1枚目が画面に収まるまで、次のボタンは無効。
+  // 全レイヤーでつなぎが画面から消えたら、2枚目を待たずに押せる。
   if (choice !== sceneHistory.length) return false;
 
   const last =
     sceneHistory[sceneHistory.length - 1];
 
-  if (last && worldX < last.endWorldX) {
+  if (last && worldX < last.bridgeEndWorldX) {
     return false;
   }
 
@@ -986,42 +1097,13 @@ function updateSceneButtons() {
 
 function selectScene(choice) {
   if (!canSelectScene(choice)) return;
-
-  const last =
-    sceneHistory[sceneHistory.length - 1];
-
-  const previousSkyFile = last
-    ? SCENE_IMAGES.routes[last.choice]
-        .destination.sky
-    : SCENE_IMAGES.initial.sky;
-
-  const origin = last ? last.skyEnd : 0;
-
-  const width = imageWidth(
-    previousSkyFile,
-    sky
-  );
-
-  const scrollX = worldX * sceneLayerSpeed(sceneLayers.sky);
-
-  const targetX =
-    scrollX +
-    layout.width +
-    sceneChangeAhead;
-
-  const tileIndex = Math.max(
-    1,
-    Math.ceil((targetX - origin) / width)
-  );
-
-  sceneHistory.push({
-    choice,
-    tileIndex,
-    skyStart: 0,
-    skyEnd: 0,
-    startWorldX: 0
-  });
-
+  // 全画像の幅を実測済み。現在の worldX を起点に整列地点を決定。
+  const event = makeSynchronizedEvent(choice, worldX, 1, sceneHistory);
+  if (!event) {
+    console.error("季節切り替えの連結位置を確保できませんでした。");
+    return;
+  }
+  sceneHistory.push(event);
   rebuildSceneTimelines();
   backgroundDirty = true;
   preloadRoute(choice + 1);
