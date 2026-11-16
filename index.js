@@ -22,10 +22,14 @@ const initialSpeed = 1;
 const acceleration = 0.08;
 const maxSpeed = 6;
 const deceleration = 0.12;
-const scenerySpeed = 0.8;
-const skySpeed = 0.8;
-// 3層の番号とつなぎの境界をそろえるため、同じ速度を使用する。
-const platformSpeed = skySpeed;
+// ===== 背景の速度設定（線路の移動量＝1を基準にした倍率） =====
+// 空＜遠景＜近景にすると、遠近感が出る。
+const skySpeed = 1;     // 空：線路と同速度
+const scenerySpeed = 0.60; // 遠景：線路の60%の速度
+const platformSpeed = 1;   // 近景：必ず1にすると線路と同速
+// 線路はworldXをそのまま使って移動するため、倍率は1。
+// 画像ごとに速度が違うので、季節のつなぎが画面を通過する時刻も異なる。
+// ボタンは、すべての層のつなぎが通過してから次の番号を選択できる。
 
 //列車画像読み込み
 const TRAIN_PARTS = [
@@ -57,6 +61,7 @@ function createTrainCars() {
     image.alt = "";
     image.draggable = false;
     image.dataset.bounceOrder = String(part.bounceOrder);
+    image.addEventListener("load", () => { layoutDirty = true; });
     image.addEventListener("error", () => {
       console.error(`列車画像を読み込めませんでした: ${part.file}`);
     });
@@ -93,6 +98,7 @@ function updateTrainBounce(dt) {
       : 0;
 
     const offsetY = -pulse * trainBounceHeight * trainBounceStrength;
+    image.bounceY = offsetY;
     image.style.transform = `translate3d(0, ${offsetY.toFixed(2)}px, 0)`;
   }
 }
@@ -139,14 +145,9 @@ function randomBetween(min, max) {
 // 列車全体の左右移動や、先頭車両の上下の揺れにも追従する。
 function getChimneyPosition() {
   const engine = trainCars[trainCars.length - 1];
-  const rect = engine.getBoundingClientRect();
-  const layerRect = smokeLayer.getBoundingClientRect();
-
   return {
-    x: rect.left - layerRect.left + rect.width * SMOKE_CONFIG.chimneyX
-      + SMOKE_CONFIG.offsetX,
-    y: rect.top - layerRect.top + rect.height * SMOKE_CONFIG.chimneyY
-      + SMOKE_CONFIG.offsetY
+    x: layout.engineX + trainX + layout.engineWidth * SMOKE_CONFIG.chimneyX + SMOKE_CONFIG.offsetX,
+    y: layout.engineY + (engine.bounceY || 0) + layout.engineHeight * SMOKE_CONFIG.chimneyY + SMOKE_CONFIG.offsetY
   };
 }
 
@@ -265,13 +266,16 @@ const sleeperOverlap = Math.max(0, getRailSetting("--rail-overlap", 4));
 const sleeperSpacing = Math.max(1, sleeperImageWidth - sleeperOverlap);
 
 // 新しい線路は、下から上昇・拡大・フェードインして定位置に収まる
-const sleeperRiseDistance = 38; // 生成位置から上昇する距離 (px)
+const sleeperRiseDistance = 48; // 生成位置から上昇する距離 (px)
 const sleeperStartScale = 0.88; // 出現時の縮小率
 const sleeperAppearDuration = 650;
 const sleeperAhead = 210;
 const particleCount = 8;
 
 const sleeperMap = new Map();
+const appearingSleepers = new Set();
+const sleeperBuffer = 300;
+let railWindowKey = "";
 let maxCreatedIndex = 0;
 let minCreatedIndex = -3;
 const particles = [];
@@ -334,15 +338,36 @@ const sceneLayers = {
   }
 };
 
-// ブラウザの高さ変更後も同じ空の位置を保つための基準高さ。
-// 空・遠景・近景すべてに同じ倍率を適用し、番号の境界をそろえる。
-const skyReferenceHeight = Math.max(1, sky.getBoundingClientRect().height);
+// 表示サイズはレイアウト計測時に更新。移動倍率には画面高を掛けない。
+// 寸法取得は初期化・画像読み込み後・リサイズ時だけ行う。
+const layout = { width: 1, height: 1, trainRight: 0, engineX: 0,
+  engineY: 0, engineWidth: 0, engineHeight: 0, railTop: 0, canvasTop: 0 };
+let layoutDirty = true;
+let backgroundDirty = true;
+let lastBackgroundWorldX = NaN;
+let buttonStateKey = "";
+function measureLayout() {
+  const worldRect = document.getElementById("world").getBoundingClientRect();
+  const trainRect = train.getBoundingClientRect();
+  const engine = trainCars[trainCars.length - 1];
+  const engineRect = engine.getBoundingClientRect();
+  const railRect = railway.getBoundingClientRect();
+  const smokeRect = smokeLayer.getBoundingClientRect();
+  layout.width = Math.max(1, worldRect.width);
+  layout.height = Math.max(1, worldRect.height);
+  layout.trainRight = trainRect.right - railRect.left - trainX;
+  layout.engineX = engineRect.left - smokeRect.left - trainX;
+  layout.engineY = engineRect.top - smokeRect.top - (engine.bounceY || 0);
+  layout.engineWidth = engineRect.width;
+  layout.engineHeight = engineRect.height;
+  layout.railTop = railRect.top;
+  layout.canvasTop = sparkCanvas.getBoundingClientRect().top;
+  layoutDirty = false;
+  backgroundDirty = true;
+}
 
 function sceneLayerSpeed(layer) {
-  if (layer.element === sky || layer.element === sceneryImageLayer || layer.element === platform) {
-    const currentHeight = Math.max(1, sky.getBoundingClientRect().height);
-    return skySpeed * currentHeight / skyReferenceHeight;
-  }
+  // 画面をリサイズしても近景＝1のままにし、線路との速度差を防ぐ。
   return layer.speed;
 }
 
@@ -351,54 +376,35 @@ const sceneHistory = [];
 const imageMetadata = new Map();
 
 // 3. 背景画像の事前読み込み
-function preloadSceneImages() {
-  const paths = new Set();
-
-  for (const file of Object.values(SCENE_IMAGES.initial)) {
-    if (file) paths.add(file);
-  }
-
-  for (const route of Object.values(SCENE_IMAGES.routes)) {
-    for (const file of [
-      ...Object.values(route.bridge),
-      ...Object.values(route.destination)
-    ]) {
-      if (file) paths.add(file);
-    }
-  }
-
-  for (const path of paths) {
+// 最初は朝＋次のつなぎ・春だけを読み込み、一度に33枚を要求しない。
+function loadSceneFiles(paths) {
+  for (const path of paths.filter(Boolean)) {
+    if (imageMetadata.has(path)) continue;
     const image = new Image();
-
-    const metadata = {
-      image,
-      loaded: false,
-      error: false,
-      ratio: 0
-    };
-
+    const metadata = { image, loaded: false, error: false, ratio: 0 };
     imageMetadata.set(path, metadata);
-
     image.onload = () => {
       metadata.loaded = true;
-      metadata.ratio =
-        image.naturalWidth / image.naturalHeight;
-
+      metadata.ratio = image.naturalWidth / image.naturalHeight;
+      backgroundDirty = true;
       rebuildSceneTimelines();
-      updateSceneBackgrounds();
       updateSceneButtons();
     };
-
     image.onerror = () => {
       metadata.error = true;
-      console.error(
-        `背景画像を読み込めませんでした: ${path}`
-      );
+      console.error(`背景画像を読み込めませんでした: ${path}`);
       updateSceneButtons();
     };
-
     image.src = path;
   }
+}
+function preloadRoute(choice) {
+  const route = SCENE_IMAGES.routes[choice];
+  if (route) loadSceneFiles([...Object.values(route.bridge), ...Object.values(route.destination)]);
+}
+function preloadSceneImages() {
+  loadSceneFiles(Object.values(SCENE_IMAGES.initial));
+  preloadRoute(0);
 }
 
 function imageIsReady(file) {
@@ -409,7 +415,7 @@ function imageIsReady(file) {
 function imageWidth(file, element) {
   const ratio = imageMetadata.get(file)?.ratio || 0;
 
-  return element.getBoundingClientRect().height * ratio;
+  return layout.height * ratio;
 }
 
 // 4. 光エフェクト用Canvasのサイズ設定
@@ -427,10 +433,7 @@ function resizeCanvas() {
 }
 
 function getTrainRight() {
-  const trainRect = train.getBoundingClientRect();
-  const railwayRect = railway.getBoundingClientRect();
-
-  return trainRect.right - railwayRect.left;
+  return layout.trainRight + trainX;
 }
 
 // 5. 線路パーツ（rail_00.png）の作成
@@ -449,6 +452,10 @@ function addSleeper(index, appearing, now) {
       `scale(${sleeperStartScale})`;
   }
 
+  if (appearing) {
+    appearingSleepers.add(index);
+    element.style.willChange = "transform, opacity";
+  }
   sleepers.appendChild(element);
   sleeperMap.set(index, {
     element,
@@ -460,60 +467,30 @@ function addSleeper(index, appearing, now) {
 
 // 6. 最初から存在する線路の作成
 function createInitialSleepers() {
-  const trainRight = getTrainRight();
-
-  const initialRightIndex = Math.ceil(
-    (trainRight + sleeperAhead) / sleeperSpacing
-  );
-
-  minCreatedIndex = -3;
-  maxCreatedIndex = initialRightIndex;
-
-  for (
-    let i = minCreatedIndex;
-    i <= initialRightIndex;
-    i++
-  ) {
-    addSleeper(i, false, 0);
-  }
+  maxCreatedIndex = Math.ceil((getTrainRight() + sleeperAhead + worldX) / sleeperSpacing);
+  spawnNewSleepers(0);
 }
 
-// 7. 列車の前方に新しい線路を作る
+// 表示範囲周辺だけを保持。通過済みの線路は逆走時に静止状態で再生成する。
 function spawnNewSleepers(now) {
-  const trainRightWorld = getTrainRight() + worldX;
-
-  const targetIndex = Math.ceil(
-    (trainRightWorld + sleeperAhead) / sleeperSpacing
-  );
-
-  if (targetIndex > maxCreatedIndex) {
-    for (
-      let i = maxCreatedIndex + 1;
-      i <= targetIndex;
-      i++
-    ) {
-      // 下から浮かび上がる出現アニメーションで生成
-      addSleeper(i, true, now);
+  const oldMax = maxCreatedIndex;
+  const target = Math.ceil((getTrainRight() + sleeperAhead + worldX) / sleeperSpacing);
+  maxCreatedIndex = Math.max(maxCreatedIndex, target);
+  const left = Math.floor((worldX - sleeperBuffer) / sleeperSpacing);
+  const right = Math.min(maxCreatedIndex,
+    Math.ceil((worldX + layout.width + sleeperBuffer) / sleeperSpacing));
+  const key = `${left}:${right}:${maxCreatedIndex}`;
+  if (key === railWindowKey) return;
+  railWindowKey = key;
+  for (const [index, item] of sleeperMap) {
+    if (index < left || index > right) {
+      item.element.remove();
+      sleeperMap.delete(index);
+      appearingSleepers.delete(index);
     }
-
-    maxCreatedIndex = targetIndex;
   }
-
-  // 左方向へ移動した際に不足する線路も生成
-  const leftmost = Math.floor(
-    (worldX - 60) / sleeperSpacing
-  );
-
-  if (leftmost < minCreatedIndex) {
-    for (
-      let i = leftmost;
-      i < minCreatedIndex;
-      i++
-    ) {
-      addSleeper(i, false, now);
-    }
-
-    minCreatedIndex = leftmost;
+  for (let index = left; index <= right; index++) {
+    addSleeper(index, index > oldMax, now);
   }
 }
 
@@ -524,10 +501,10 @@ function createLightParticles(
 ) {
   // Canvasと線路の位置の違いを補正
   const railwayTop =
-    railway.getBoundingClientRect().top;
+    layout.railTop;
 
   const canvasTop =
-    sparkCanvas.getBoundingClientRect().top;
+    layout.canvasTop;
 
   const y =
     railwayTop -
@@ -565,8 +542,8 @@ function updateSleepers(now) {
   // 線路全体は左右方向にのみスクロール
   sleepers.style.transform = `translate3d(${-worldX}px, 0, 0)`;
 
-  for (const [index, item] of sleeperMap) {
-    if (item.state !== "appearing") continue;
+  for (const index of appearingSleepers) {
+    const item = sleeperMap.get(index);
 
     const t = Math.min(
       Math.max((now - item.startTime) / sleeperAppearDuration, 0),
@@ -592,6 +569,8 @@ function updateSleepers(now) {
 
     if (t >= 1) {
       item.state = "placed";
+      appearingSleepers.delete(index);
+      item.element.style.willChange = "auto";
       // 固定位置に戻した後は、何もアニメーションさせない
       item.element.style.transform = "none";
       item.element.style.opacity = "1";
@@ -658,73 +637,47 @@ function updateParticles(dt) {
 
 // 12. 背景スクロール
 function updateBackground() {
-  updateSceneBackgrounds();
-
-  sceneryTrack.style.transform =
-    `translateX(${-worldX * scenerySpeed}px)`;
+  if (backgroundDirty || worldX !== lastBackgroundWorldX) {
+    updateSceneBackgrounds();
+    lastBackgroundWorldX = worldX;
+    backgroundDirty = false;
+  }
+  // ボタンは状態が変わったときのみ更新する。
+  const last = sceneHistory[sceneHistory.length - 1];
+  const key = `${sceneHistory.length}:${!last || worldX >= last.endWorldX}`;
+  if (key !== buttonStateKey) {
+    buttonStateKey = key;
+    updateSceneButtons();
+  }
 }
 
 // 13. 列車の移動
-function updateTrain() {
-  let direction = 0;
-
-  if (moveLeft && !moveRight) {
-    direction = -1;
-  }
-
-  if (moveRight && !moveLeft) {
-    direction = 1;
-  }
-
-  if (direction !== 0) {
-
-    if (currentSpeed * direction <= 0) {
-      if (currentSpeed === 0) {
-        currentSpeed = initialSpeed * direction;
-      } else {
-        currentSpeed += deceleration * direction;
-
-        if (currentSpeed * direction >= 0) {
-          currentSpeed = initialSpeed * direction;
+function updateTrain(dt = 1) {
+  const direction = moveLeft === moveRight ? 0 : moveRight ? 1 : -1;
+  // 固定刻み＋端数で積分し、60/120Hz等の速度差を抑える。
+  let remaining = dt;
+  while (remaining > 0.000001) {
+    const step = Math.min(1, remaining);
+    remaining -= step;
+    if (direction) {
+      if (currentSpeed * direction <= 0) {
+        if (currentSpeed === 0) currentSpeed = initialSpeed * direction;
+        else {
+          currentSpeed += deceleration * direction * step;
+          if (currentSpeed * direction >= 0) currentSpeed = initialSpeed * direction;
         }
-      }
+      } else currentSpeed += acceleration * direction * step;
     } else {
-      currentSpeed += acceleration * direction;
+      const amount = deceleration * step;
+      currentSpeed = currentSpeed > 0 ? Math.max(0, currentSpeed - amount)
+        : Math.min(0, currentSpeed + amount);
     }
-
-  } else {
-    if (currentSpeed > 0) {
-      currentSpeed = Math.max(
-        0,
-        currentSpeed - deceleration
-      );
-    } else if (currentSpeed < 0) {
-      currentSpeed = Math.min(
-        0,
-        currentSpeed + deceleration
-      );
-    }
+    currentSpeed = Math.max(-maxSpeed, Math.min(maxSpeed, currentSpeed));
+    trainX += currentSpeed * step;
+    if (trainX > trainRange) { worldX += trainX - trainRange; trainX = trainRange; }
+    if (trainX < -trainRange) { worldX += trainX + trainRange; trainX = -trainRange; }
   }
-
-  currentSpeed = Math.max(
-    -maxSpeed,
-    Math.min(maxSpeed, currentSpeed)
-  );
-
-  trainX += currentSpeed;
-
-  if (trainX > trainRange) {
-    worldX += trainX - trainRange;
-    trainX = trainRange;
-  }
-
-  if (trainX < -trainRange) {
-    worldX += trainX + trainRange;
-    trainX = -trainRange;
-  }
-
-  train.style.left =
-    `calc(50% + ${trainX}px)`;
+  train.style.setProperty("--train-x", `${trainX}px`);
 }
 
 // 14. アニメーションのメインループ
@@ -738,7 +691,12 @@ function animate(now) {
 
   lastFrame = now;
 
-  updateTrain();
+  if (layoutDirty) {
+    measureLayout();
+    resizeCanvas();
+    rebuildSceneTimelines();
+  }
+  updateTrain(dt);
   updateTrainBounce(dt);
   updateSmoke(now, dt);
   updateBackground();
@@ -787,11 +745,11 @@ window.addEventListener("blur", () => {
   moveRight = false;
 });
 
-window.addEventListener("resize", () => {
-  resizeCanvas();
-  rebuildSceneTimelines();
-  updateSceneBackgrounds();
-  updateSceneButtons();
+window.addEventListener("resize", () => { layoutDirty = true; });
+document.addEventListener("visibilitychange", () => {
+  moveLeft = false;
+  moveRight = false;
+  lastFrame = 0;
 });
 
 // 16. 背景切り替えのタイムライン
@@ -936,80 +894,53 @@ function rebuildSceneTimelines() {
 }
 
 // 17. 背景表示用パネル作成
-function ensureScenePanels(layer, count) {
-  while (layer.element.children.length < count) {
-    const panel =
-      document.createElement("div");
-
-    panel.className = "scene-image-panel";
-    layer.element.appendChild(panel);
-  }
-
-  while (layer.element.children.length > count) {
-    layer.element.lastElementChild.remove();
-  }
-
-  layer.segments.forEach((segment, i) => {
-    const panel = layer.element.children[i];
-
-    panel.style.backgroundImage =
-      `url("${segment.file}")`;
-
-    panel.style.backgroundRepeat =
-      segment.repeat
-        ? "repeat-x"
-        : "no-repeat";
-  });
+// 画面に見えるタイルだけを使い回す。背景の再描画・全画面clip-path更新を避ける。
+function ensureScenePanels(layer) {
+  backgroundDirty = true;
 }
 
-// 18. 背景画像の継ぎ目対策
-const backgroundOverlap = 3;
-
+const backgroundOverlap = 0.5;
 function updateSceneBackgrounds() {
   for (const layer of Object.values(sceneLayers)) {
     const scrollX = worldX * sceneLayerSpeed(layer);
-
-    const screenWidth =
-      layer.element.getBoundingClientRect().width;
-
-    layer.segments.forEach((segment, i) => {
-      const panel = layer.element.children[i];
-
-      const startX = segment.from - scrollX;
-      const endX = segment.to - scrollX;
-
-      const left = Math.max(
-        0,
-        Math.min(
-          screenWidth,
-          startX - backgroundOverlap
-        )
-      );
-
-      const right = Math.max(
-        0,
-        Math.min(
-          screenWidth,
-          endX + backgroundOverlap
-        )
-      );
-
-      if (right <= left) {
-        panel.style.display = "none";
-        return;
+    const visible = [];
+    for (const segment of layer.segments) {
+      const width = imageWidth(segment.file, layer.element);
+      if (width <= 0 || segment.to <= scrollX || segment.from >= scrollX + layout.width) continue;
+      const first = segment.repeat
+        ? Math.floor((Math.max(scrollX, segment.from) - segment.origin) / width) : 0;
+      const last = segment.repeat
+        ? Math.ceil((Math.min(scrollX + layout.width, segment.to) - segment.origin) / width) - 1 : 0;
+      for (let tile = first; tile <= last; tile++) {
+        const start = segment.origin + tile * width;
+        const left = Math.max(start, segment.from);
+        const right = Math.min(start + width, segment.to);
+        if (right <= left) continue;
+        visible.push({file: segment.file, width, left, crop: start - left,
+          span: right - left, repeat: segment.repeat});
       }
-
-      panel.style.display = "block";
-
-      panel.style.backgroundPositionX =
-        `${segment.origin - scrollX}px`;
-
-      panel.style.clipPath =
-        `inset(0 ${screenWidth - right}px 0 ${left}px)`;
+    }
+    while (layer.element.children.length < visible.length) {
+      const panel = document.createElement("div");
+      panel.className = "scene-image-panel";
+      layer.element.appendChild(panel);
+    }
+    // 不要なGPUレイヤーを保持しない。
+    while (layer.element.children.length > visible.length) layer.element.lastElementChild.remove();
+    visible.forEach((tile, i) => {
+      const panel = layer.element.children[i];
+      const key = `${tile.file}:${tile.width}:${tile.span}:${tile.crop}:${tile.repeat}`;
+      if (panel.tileKey !== key) {
+        panel.tileKey = key;
+        panel.style.backgroundImage = `url("${tile.file}")`;
+        panel.style.backgroundSize = `${tile.width}px 100%`;
+        panel.style.backgroundRepeat = tile.repeat ? "repeat-x" : "no-repeat";
+        panel.style.backgroundPositionX = `${tile.crop}px`;
+        panel.style.width = `${tile.span + (tile.repeat ? backgroundOverlap : 0)}px`;
+      }
+      panel.style.transform = `translate3d(${tile.left - scrollX}px, 0, 0)`;
     });
   }
-
-  updateSceneButtons();
 }
 
 // 19. 背景切り替えボタン
@@ -1075,7 +1006,7 @@ function selectScene(choice) {
 
   const targetX =
     scrollX +
-    sky.getBoundingClientRect().width +
+    layout.width +
     sceneChangeAhead;
 
   const tileIndex = Math.max(
@@ -1092,7 +1023,9 @@ function selectScene(choice) {
   });
 
   rebuildSceneTimelines();
-  updateSceneBackgrounds();
+  backgroundDirty = true;
+  preloadRoute(choice + 1);
+  updateSceneButtons();
 }
 
 for (const button of sceneButtons) {
@@ -1105,6 +1038,7 @@ for (const button of sceneButtons) {
 
 // 20. 初期化
 createTrainCars();
+measureLayout();
 initializeSmoke();
 platform.style.backgroundImage = "none";
 
